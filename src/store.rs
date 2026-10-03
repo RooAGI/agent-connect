@@ -202,8 +202,9 @@ impl Store {
         &mut self,
         text: String,
         images: Vec<String>,
+        tags: Option<Vec<String>>,
     ) -> Result<(String, Packet), String> {
-        let body = Body { text, images };
+        let body = Body { text, images, tags };
         validate_body(&body)?;
         let me = self.pubkey_hex.clone();
         let (seq, prev) = match self.heads.get(&me) {
@@ -354,8 +355,8 @@ mod tests {
         Store::init(&d).unwrap();
         let mut s = Store::open(&d).unwrap();
         let me = s.pubkey_hex.clone();
-        let (id0, _) = s.create_packet("first".into(), vec![]).unwrap();
-        let (id1, _) = s.create_packet("second".into(), vec![]).unwrap();
+        let (id0, _) = s.create_packet("first".into(), vec![], None).unwrap();
+        let (id1, _) = s.create_packet("second".into(), vec![], None).unwrap();
         let h = s.heads.get(&me).unwrap();
         assert_eq!(h.seq, 1);
         assert_eq!(h.id, id1);
@@ -425,8 +426,46 @@ mod tests {
         let d = tmpdir("limits");
         Store::init(&d).unwrap();
         let mut s = Store::open(&d).unwrap();
-        assert!(s.create_packet("a".repeat(281), vec![]).is_err());
-        assert!(s.create_packet("ok".into(), vec!["a".into(); 5]).is_err());
+        assert!(s.create_packet("a".repeat(281), vec![], None).is_err());
+        assert!(s.create_packet("ok".into(), vec!["a".into(); 5], None).is_err());
+        // tag limits enforced on create too
+        assert!(s
+            .create_packet("ok".into(), vec![], Some(vec!["t".into(); 6]))
+            .is_err());
+        assert!(s
+            .create_packet("ok".into(), vec![], Some(vec!["Bad Tag!".into()]))
+            .is_err());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn tags_roundtrip_through_store() {
+        let d = tmpdir("tagsrt");
+        Store::init(&d).unwrap();
+        let mut s = Store::open(&d).unwrap();
+        let (id_tagged, _) = s
+            .create_packet(
+                "tagged".into(),
+                vec![],
+                Some(vec!["rust".into(), "p2p".into()]),
+            )
+            .unwrap();
+        let (id_plain, _) = s.create_packet("plain".into(), vec![], None).unwrap();
+        // read back via feed: tags preserved, untagged stays untagged
+        let feed = s.feed(10);
+        let tagged = feed.iter().find(|(id, _)| *id == id_tagged).unwrap();
+        assert_eq!(
+            tagged.1.body.tags,
+            Some(vec!["rust".to_string(), "p2p".to_string()])
+        );
+        let plain = feed.iter().find(|(id, _)| *id == id_plain).unwrap();
+        assert_eq!(plain.1.body.tags, None);
+        // and via direct packet read (deserialization path)
+        let reread = s.read_packet(&id_tagged).unwrap();
+        assert_eq!(
+            reread.body.tags,
+            Some(vec!["rust".to_string(), "p2p".to_string()])
+        );
         let _ = fs::remove_dir_all(&d);
     }
 
@@ -436,7 +475,7 @@ mod tests {
         Store::init(&d).unwrap();
         let (id1, _) = {
             let mut s = Store::open(&d).unwrap();
-            s.create_packet("one".into(), vec![]).unwrap()
+            s.create_packet("one".into(), vec![], None).unwrap()
         };
         let s2 = Store::open(&d).unwrap();
         let me = s2.pubkey_hex.clone();

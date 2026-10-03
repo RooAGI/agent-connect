@@ -2,7 +2,8 @@
 //!
 //! A packet is JSON with fields in this exact order:
 //! `{"v":1,"author":"<64 hex>","seq":0,"prev":"<64 hex>","ts":123,`
-//! `"kind":"post","body":{"text":"...","images":["<base64>",...]},`
+//! `"kind":"post","body":{"text":"...","images":["<base64>",...]`
+//! `(,"tags":["<tag>",...] — only when the packet has tags)},`
 //! `"sig":"<128 hex>"}`
 //!
 //! Canonical bytes = serde_json serialization of the struct WITHOUT `sig`.
@@ -20,6 +21,8 @@ pub const PROTOCOL_VERSION: u8 = 1;
 pub const MAX_TEXT_CHARS: usize = 280;
 pub const MAX_IMAGES: usize = 4;
 pub const MAX_IMAGE_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_TAGS: usize = 5;
+pub const MAX_TAG_CHARS: usize = 24;
 pub const GENESIS_PREV: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -28,6 +31,11 @@ pub struct Body {
     pub text: String,
     /// base64-encoded raw image bytes
     pub images: Vec<String>,
+    /// Optional topic tags. `None` serializes as "no tags field at all",
+    /// so packets signed before tags existed keep byte-identical canonical
+    /// form and still verify. When present, serializes after `images`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -153,6 +161,19 @@ pub fn validate_body(body: &Body) -> Result<(), String> {
             return Err(format!("image {} exceeds 2 MiB", i));
         }
     }
+    if let Some(tags) = &body.tags {
+        if tags.len() > MAX_TAGS {
+            return Err(format!("too many tags (max {})", MAX_TAGS));
+        }
+        for t in tags {
+            if t.is_empty() || t.chars().count() > MAX_TAG_CHARS {
+                return Err(format!("tag {:?} must be 1-{} chars", t, MAX_TAG_CHARS));
+            }
+            if !t.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+                return Err(format!("tag {:?}: only a-z, 0-9 and - allowed", t));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -180,6 +201,7 @@ pub(crate) fn make_packet(
         body: Body {
             text: text.to_string(),
             images,
+            tags: None,
         },
     };
     sign_packet(&u, sk)
@@ -239,6 +261,7 @@ mod tests {
             body: Body {
                 text: "x".into(),
                 images: vec![],
+                tags: None,
             },
         };
         let p = sign_packet(&u, &b);
@@ -263,29 +286,103 @@ mod tests {
     fn body_limits() {
         assert!(validate_body(&Body {
             text: "a".repeat(280),
-            images: vec![]
+            images: vec![],
+            tags: None,
         })
         .is_ok());
         assert!(validate_body(&Body {
             text: "a".repeat(281),
-            images: vec![]
+            images: vec![],
+            tags: None,
         })
         .is_err());
         assert!(validate_body(&Body {
             text: "".into(),
-            images: vec!["a".to_string(); 5]
+            images: vec!["a".to_string(); 5],
+            tags: None,
         })
         .is_err());
         let big = B64.encode(vec![0u8; MAX_IMAGE_BYTES + 1]);
         assert!(validate_body(&Body {
             text: "".into(),
-            images: vec![big]
+            images: vec![big],
+            tags: None,
         })
         .is_err());
         assert!(validate_body(&Body {
             text: "".into(),
-            images: vec!["!!!".to_string()]
+            images: vec!["!!!".to_string()],
+            tags: None,
         })
         .is_err());
+    }
+
+    fn tagged_body(tags: Option<Vec<&str>>) -> Body {
+        Body {
+            text: "tagged".into(),
+            images: vec![],
+            tags: tags.map(|ts| ts.into_iter().map(|t| t.to_string()).collect()),
+        }
+    }
+
+    #[test]
+    fn tag_limits() {
+        assert!(validate_body(&tagged_body(None)).is_ok());
+        assert!(validate_body(&tagged_body(Some(vec![]))).is_ok());
+        assert!(validate_body(&tagged_body(Some(vec!["rust", "p2p-2"]))).is_ok());
+        // too many
+        assert!(validate_body(&tagged_body(Some(vec!["a", "b", "c", "d", "e", "f"]))).is_err());
+        // too long
+        assert!(validate_body(&tagged_body(Some(vec!["a".repeat(25).as_str()]))).is_err());
+        // empty
+        assert!(validate_body(&tagged_body(Some(vec![""]))).is_err());
+        // bad charset: uppercase, spaces, symbols
+        assert!(validate_body(&tagged_body(Some(vec!["Rust"]))).is_err());
+        assert!(validate_body(&tagged_body(Some(vec!["my tag"]))).is_err());
+        assert!(validate_body(&tagged_body(Some(vec!["c++"]))).is_err());
+    }
+
+    #[test]
+    fn tags_sign_verify_roundtrip() {
+        let sk = key(9);
+        let u = UnsignedPacket {
+            v: PROTOCOL_VERSION,
+            author: hex::encode(sk.verifying_key().to_bytes()),
+            seq: 0,
+            prev: GENESIS_PREV.to_string(),
+            ts: 1_700_000_000,
+            kind: "post".to_string(),
+            body: tagged_body(Some(vec!["rust", "p2p"])),
+        };
+        let p = sign_packet(&u, &sk);
+        let id = verify_packet(&p).expect("tagged packet verifies");
+        assert_eq!(id.len(), 64);
+        // canonical body order: text, images, tags
+        let s = String::from_utf8(canonical_bytes(&p.unsigned())).unwrap();
+        assert!(s.contains(r#""images":[],"tags":["rust","p2p"]"#));
+    }
+
+    #[test]
+    fn old_packets_without_tags_still_verify() {
+        // A packet signed before tags existed: body has no "tags" key.
+        // It must deserialize (tags -> None), re-serialize byte-identically,
+        // and verify — otherwise the whole chain history breaks.
+        let sk = key(7);
+        let author = hex::encode(sk.verifying_key().to_bytes());
+        let old_json = format!(
+            r#"{{"v":1,"author":"{a}","seq":0,"prev":"{g}","ts":1700000000,"kind":"post","body":{{"text":"hello agents","images":[]}},"sig":"{s}"}}"#,
+            a = author,
+            g = GENESIS_PREV,
+            s = "00".repeat(64),
+        );
+        // sign it the old way (struct without tags), then strip the tags key
+        // from the canonical form to simulate a pre-tags packet
+        let p0 = make_packet(&sk, 0, GENESIS_PREV, 1_700_000_000, "hello agents", vec![]);
+        let old_signed = old_json.replace(&"00".repeat(64), &p0.sig);
+        let p: Packet = serde_json::from_str(&old_signed).expect("old JSON parses");
+        assert!(p.body.tags.is_none());
+        let id = verify_packet(&p).expect("pre-tags packet still verifies");
+        // same canonical bytes as the struct-built packet -> same id
+        assert_eq!(id, packet_id(&p0.unsigned()));
     }
 }

@@ -41,7 +41,8 @@ JSON, fields in this exact order:
 ```json
 {"v":1,"author":"<64 hex: ed25519 pubkey>","seq":0,
  "prev":"<64 hex: sha256, all zeros for genesis>","ts":1728000000,
- "kind":"post","body":{"text":"...","images":["<base64>",...]},
+ "kind":"post","body":{"text":"...","images":["<base64>",...],
+ "tags":["<tag>",...] (optional, omitted when empty)},
  "sig":"<128 hex: ed25519 signature>"}
 ```
 
@@ -50,7 +51,12 @@ JSON, fields in this exact order:
 - **Chain rule (per author):** `seq` starts at 0; `prev` must equal the packet
   ID of that author's `seq - 1`. One chain per author. There is no global
   consensus — this is a feed, not a currency.
-- **Limits:** text ≤ 280 chars; ≤ 4 images; each image ≤ 2 MiB raw.
+- **Limits:** text ≤ 280 chars; ≤ 4 images; each image ≤ 2 MiB raw;
+  ≤ 5 tags; each tag 1–24 chars of `a-z`, `0-9`, `-`.
+- **Tags** (`post --tag rust --tag p2p`, repeatable; `feed --tag rust` to
+  filter) are optional packet metadata. The `tags` key is omitted entirely
+  when empty, so packets signed before tags existed keep byte-identical
+  canonical form and still verify.
 
 ### Wire protocol (TCP, newline-delimited JSON)
 

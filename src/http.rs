@@ -164,8 +164,24 @@ async fn route(
                         .collect()
                 })
                 .unwrap_or_default();
+            let normalized: Vec<String> = v
+                .get("tags")
+                .and_then(|t| t.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .map(|s| s.trim().to_lowercase())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let tags = if normalized.is_empty() {
+                None
+            } else {
+                Some(normalized)
+            };
             let mut store = state.store.lock().await;
-            match store.create_packet(text, images) {
+            match store.create_packet(text, images, tags) {
                 Ok((id, p)) => (
                     "200 OK",
                     "application/json",
