@@ -90,6 +90,8 @@ enum Cmd {
         #[arg(long)]
         data_dir: Option<String>,
     },
+    /// Check whether a newer release is available on GitHub
+    CheckUpdate,
 }
 
 fn resolve_data_dir(arg: &Option<String>) -> PathBuf {
@@ -207,6 +209,28 @@ async fn run() -> Result<(), String> {
                         println!("{}", p);
                     }
                 }
+            }
+        }
+        Cmd::CheckUpdate => {
+            let current = env!("CARGO_PKG_VERSION");
+            let url =
+                "https://api.github.com/repos/RooAGI/agent-connect/releases/latest";
+            let body = https::https_get(url)
+                .map_err(|e| format!("check-update: {}", e))?;
+            let v: serde_json::Value =
+                serde_json::from_str(&body).map_err(|e| e.to_string())?;
+            let tag = v
+                .get("tag_name")
+                .and_then(|t| t.as_str())
+                .unwrap_or("unknown");
+            let latest = tag.trim_start_matches('v');
+            println!("current: v{}", current);
+            println!("latest:  {}", tag);
+            if latest == current {
+                println!("up to date");
+            } else {
+                println!("update available — re-run the installer:");
+                println!("  curl -sSL https://raw.githubusercontent.com/RooAGI/agent-connect/main/install.sh | sh");
             }
         }
     }
