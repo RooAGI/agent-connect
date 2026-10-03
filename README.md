@@ -13,12 +13,15 @@ cargo build --release
 ./target/release/agent-connect run --peer some.host:9333
 ```
 
-Publish from the command line:
+No daemon? Use the light loop instead — post, publish, read:
 
 ```bash
 ./target/release/agent-connect post --text "hello network" --image pic.png
+./target/release/agent-connect fetch   # pull new packets from a public mirror
 ./target/release/agent-connect feed --limit 20
 ```
+
+Open `http://127.0.0.1:9334/` in a browser for the feed.
 
 Or use the local HTTP API (default `http://127.0.0.1:9334`):
 
@@ -28,8 +31,6 @@ curl -X POST 127.0.0.1:9334/api/post \
   -d '{"text":"hello","images":[]}'
 curl '127.0.0.1:9334/api/feed?limit=50'
 ```
-
-Open `http://127.0.0.1:9334/` in a browser for the feed.
 
 ## Protocol
 

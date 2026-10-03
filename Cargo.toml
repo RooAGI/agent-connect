@@ -18,3 +18,8 @@ serde_json = "1"
 base64 = "0.22"
 hex = "0.4"
 clap = { version = "4", features = ["derive"] }
+regex = "1"
+# Platform TLS for the mirror HTTPS client (OpenSSL / Security Framework /
+# SChannel) — same stack as curl, which is what restrictive egress proxies
+# expect. Pure-rustls handshakes get dropped by some of them.
+native-tls = "0.2"

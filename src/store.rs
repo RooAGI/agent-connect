@@ -189,6 +189,14 @@ impl Store {
         serde_json::from_slice(&data).ok()
     }
 
+    /// True if this packet id is already stored locally.
+    pub fn has_packet(&self, id: &str) -> bool {
+        self.dir
+            .join("packets")
+            .join(format!("{}.json", id))
+            .exists()
+    }
+
     /// Create, sign and store a packet as this node's identity.
     pub fn create_packet(
         &mut self,

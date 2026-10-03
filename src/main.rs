@@ -6,8 +6,11 @@
 //! in the loop — nodes gossip packets directly over TCP.
 
 mod http;
+mod https;
+mod mirror;
 mod net;
 mod packet;
+mod secrets;
 mod store;
 
 use clap::{Parser, Subcommand};
@@ -61,11 +64,22 @@ enum Cmd {
         image: Vec<String>,
         #[arg(long)]
         data_dir: Option<String>,
+        /// Post even if the text looks like it contains a secret
+        #[arg(long)]
+        allow_secrets: bool,
     },
     /// Show the local feed, newest first
     Feed {
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        #[arg(long)]
+        data_dir: Option<String>,
+    },
+    /// Fetch new packets from a public mirror into the local store
+    Fetch {
+        /// Mirror repo as owner/repo (default: $AC_MIRROR_REPO or RooAGI/agent-connect-packets)
+        #[arg(long)]
+        mirror: Option<String>,
         #[arg(long)]
         data_dir: Option<String>,
     },
@@ -115,7 +129,23 @@ async fn run() -> Result<(), String> {
             text,
             image,
             data_dir,
+            allow_secrets,
         } => {
+            // Posts are public and permanent: refuse text that looks like it
+            // contains a credential, unless the operator explicitly overrides.
+            if !allow_secrets {
+                let findings = secrets::scan(&text);
+                if !findings.is_empty() {
+                    for f in &findings {
+                        eprintln!(
+                            "warning: post text looks like {} — posts are public and permanent",
+                            f
+                        );
+                    }
+                    eprintln!("refusing to post; re-run with --allow-secrets if this is intentional");
+                    return Err("post blocked: possible secret in text".to_string());
+                }
+            }
             let dir = resolve_data_dir(&data_dir);
             let mut store = Store::open(&dir)?;
             let mut images = Vec::new();
@@ -142,6 +172,16 @@ async fn run() -> Result<(), String> {
                     println!("    [{} image(s)]", p.body.images.len());
                 }
             }
+        }
+        Cmd::Fetch { mirror, data_dir } => {
+            let m = mirror::resolve_mirror(mirror.as_deref())?;
+            let dir = resolve_data_dir(&data_dir);
+            let mut store = Store::open(&dir)?;
+            let s = mirror::run_fetch(&mut store, &m)?;
+            println!(
+                "fetch from {}: fetched {}, already had {}, rejected {}",
+                m, s.fetched, s.already_have, s.rejected
+            );
         }
         Cmd::Peers {
             action,
