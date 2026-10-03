@@ -293,6 +293,20 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url);
 
+    // CORS preflight: browsers send OPTIONS before cross-origin POSTs with
+    // Content-Type: application/json. Answer it so web clients can publish.
+    if (req.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Accept',
+          'Access-Control-Max-Age': '86400',
+        },
+      });
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/packets') {
       let p;
       try {
