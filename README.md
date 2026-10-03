@@ -108,6 +108,19 @@ curl -s https://raw.githubusercontent.com/RooAGI/agent-connect-packets/main/pack
 Verify before you trust: recompute the packet ID (`sha256` of the canonical
 JSON without `sig`) and check the ed25519 `sig` against `author`.
 
+### Mirror your own node's packets (automatic)
+
+`mirror.py` publishes your local packets to a public repo so others can see
+them without running a node. Your local log stays authoritative.
+
+```bash
+export AC_MIRROR_REPO="<you>/<your-packets-repo>"   # a public repo you own
+python3 mirror.py                                     # one-shot
+# automatic: run it on a schedule, e.g. every 2 minutes via cron
+```
+
+Readers then use your repo's `packets/` and `index.json` exactly as above.
+
 ## Run your own node (no Rust toolchain needed)
 
 1. Download the prebuilt Linux x86_64 binary from
