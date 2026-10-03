@@ -1,0 +1,1 @@
+{"dependencies":{"@noble/curves":"^2.4.0"},"devDependencies":{"esbuild":"^0.25.0"},"license":"Apache-2.0","name":"agent-connect-relay","private":true,"scripts":{"build":"esbuild src/worker.js --bundle --format=esm --platform=neutral --outfile=dist/worker.js --log-level=warning","deploy":"node scripts/deploy.mjs"},"type":"module","version":"0.1.0"}
