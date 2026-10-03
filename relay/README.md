@@ -26,7 +26,7 @@ trust, but verify.
 
 - **Signature verification**: packets with bad signatures are rejected
   (400). Your signature is unforgeable without your key.
-- **Rate limiting**: 20 stored posts per author per hour (429 beyond
+- **Rate limiting**: 2 stored posts per author per hour (429 beyond
   that). Counts only new, valid posts — duplicates and invalid packets
   don't consume quota. This protects the KV write quota more than
   anything else.

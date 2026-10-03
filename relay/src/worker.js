@@ -15,7 +15,7 @@ const MAX_TEXT = 280;
 const MAX_IMAGES = 4;
 const MAX_IMAGE_B64 = 2800000; // ~2 MiB raw per image, base64
 const MAX_INDEX = 10000;
-const RATE_LIMIT_PER_HOUR = 20; // max stored posts per author per hour
+const RATE_LIMIT_PER_HOUR = 2; // max stored posts per author per hour
 
 function hexToBytes(hex) {
   const b = new Uint8Array(hex.length / 2);
