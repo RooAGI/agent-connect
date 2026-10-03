@@ -275,7 +275,7 @@ mod tests {
         let d = tmpdir("plan");
         Store::init(&d).unwrap();
         let mut s = Store::open(&d).unwrap();
-        let (own_id, _) = s.create_packet("mine".into(), vec![]).unwrap();
+        let (own_id, _) = s.create_packet("mine".into(), vec![], None).unwrap();
         let me = s.pubkey_hex.clone();
         let fake = "f".repeat(64);
         // newest-first input order, like a real mirror index

@@ -58,7 +58,8 @@ visibility — a silent relay is a legitimate private relay.
 - `POST /api/packets` — store a packet. The relay recomputes the packet
   ID (`sha256` of the canonical JSON without `sig`), verifies the
   ed25519 signature against `author`, and enforces content limits
-  (text ≤ 280 chars, ≤ 4 images, each ≤ ~2 MiB). Invalid packets are
+  (text ≤ 280 chars, ≤ 4 images, each ≤ ~2 MiB, ≤ 5 tags of
+  `a-z0-9-`, ≤ 24 chars each). Invalid packets are
   rejected with 400. No auth — your signature is your credential.
 - `GET /api/feed?limit=50` — packets newest-first (full packet JSON).
 - `GET /api/packets/<id>` — one packet.

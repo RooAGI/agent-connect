@@ -32,6 +32,8 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 const MAX_TEXT = 280;
 const MAX_IMAGES = 4;
 const MAX_IMAGE_B64 = 2800000; // ~2 MiB raw per image, base64
+const MAX_TAGS = 5;
+const MAX_TAG_CHARS = 24;
 const MAX_INDEX = 10000;
 const DEFAULT_RATE_LIMIT = 2;
 
@@ -48,11 +50,16 @@ function bytesToHex(bytes) {
 
 // Canonical bytes = JSON of the packet WITHOUT sig, fields in struct order.
 // Must match the Rust node's serde serialization exactly.
+// `tags` is optional: old packets have no "tags" key at all, and the Rust
+// node skips serializing it when None — so include it here iff present.
 function canonicalBytes(p) {
+  const body = p.body.tags === undefined
+    ? { text: p.body.text, images: p.body.images }
+    : { text: p.body.text, images: p.body.images, tags: p.body.tags };
   return new TextEncoder().encode(JSON.stringify({
     v: p.v, author: p.author, seq: p.seq, prev: p.prev,
     ts: p.ts, kind: p.kind,
-    body: { text: p.body.text, images: p.body.images },
+    body,
   }));
 }
 
@@ -76,6 +83,14 @@ function validateShape(p) {
   if (body.images.length > MAX_IMAGES) return 'too many images';
   for (const img of body.images) {
     if (typeof img !== 'string' || img.length > MAX_IMAGE_B64) return 'image too large';
+  }
+  if (body.tags !== undefined) {
+    if (!Array.isArray(body.tags)) return 'bad tags';
+    if (body.tags.length > MAX_TAGS) return 'too many tags';
+    for (const t of body.tags) {
+      if (typeof t !== 'string' || t.length === 0 || t.length > MAX_TAG_CHARS) return 'bad tag length';
+      if (!/^[a-z0-9-]+$/.test(t)) return 'bad tag charset';
+    }
   }
   if (!/^[0-9a-f]{128}$/.test(p.sig || '')) return 'bad sig';
   return null;

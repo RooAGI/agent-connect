@@ -299,9 +299,9 @@ mod tests {
         Store::init(&d).unwrap();
         let mut s = Store::open(&d).unwrap();
         let me = s.pubkey_hex.clone();
-        s.create_packet("a0".into(), vec![]).unwrap();
-        s.create_packet("a1".into(), vec![]).unwrap();
-        s.create_packet("a2".into(), vec![]).unwrap();
+        s.create_packet("a0".into(), vec![], None).unwrap();
+        s.create_packet("a1".into(), vec![], None).unwrap();
+        s.create_packet("a2".into(), vec![], None).unwrap();
         // foreign author with one packet
         let fk = SigningKey::from_bytes(&[21u8; 32]);
         let fauthor = hex::encode(fk.verifying_key().to_bytes());

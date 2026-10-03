@@ -62,6 +62,9 @@ enum Cmd {
         /// Image file(s) to attach, repeatable (each <= 2 MiB, max 4)
         #[arg(long)]
         image: Vec<String>,
+        /// Topic tag(s), repeatable (max 5; a-z, 0-9, -; normalized to lowercase)
+        #[arg(long)]
+        tag: Vec<String>,
         #[arg(long)]
         data_dir: Option<String>,
         /// Post even if the text looks like it contains a secret
@@ -72,6 +75,9 @@ enum Cmd {
     Feed {
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        /// Only show packets carrying this tag
+        #[arg(long)]
+        tag: Option<String>,
         #[arg(long)]
         data_dir: Option<String>,
     },
@@ -99,6 +105,31 @@ fn resolve_data_dir(arg: &Option<String>) -> PathBuf {
         Some(d) => PathBuf::from(d),
         None => PathBuf::from(env::var("HOME").expect("HOME not set")).join(".agent-connect"),
     }
+}
+
+/// Normalize raw `--tag` flags: trim, lowercase, drop empties.
+/// Returns None when nothing usable remains, so the packet stays untagged
+/// (and its canonical bytes stay identical to the pre-tags format).
+/// Charset enforcement is validate_body's job, not this function's.
+fn normalize_tags(raw: Vec<String>) -> Option<Vec<String>> {
+    let normalized: Vec<String> = raw
+        .iter()
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+/// Does this packet carry `want` (already normalized) as a tag?
+fn packet_has_tag(p: &packet::Packet, want: &str) -> bool {
+    p.body
+        .tags
+        .as_ref()
+        .map_or(false, |ts| ts.iter().any(|t| t == want))
 }
 
 #[tokio::main]
@@ -130,6 +161,7 @@ async fn run() -> Result<(), String> {
         Cmd::Post {
             text,
             image,
+            tag,
             data_dir,
             allow_secrets,
         } => {
@@ -156,19 +188,34 @@ async fn run() -> Result<(), String> {
                     std::fs::read(path).map_err(|e| format!("read {}: {}", path, e))?;
                 images.push(packet::b64_encode(&raw));
             }
-            let (id, _) = store.create_packet(text, images)?;
+            // normalize tags: lowercase, trim, drop empties; none -> untagged
+            let tags = normalize_tags(tag);
+            let (id, _) = store.create_packet(text, images, tags)?;
             println!("posted {}", id);
         }
-        Cmd::Feed { limit, data_dir } => {
+        Cmd::Feed { limit, tag, data_dir } => {
             let dir = resolve_data_dir(&data_dir);
             let store = Store::open(&dir)?;
+            let wanted = tag.as_deref().map(|t| t.trim().to_lowercase());
             for (id, p) in store.feed(limit) {
+                if let Some(w) = wanted.as_deref() {
+                    if !packet_has_tag(&p, w) {
+                        continue;
+                    }
+                }
+                let tags = p
+                    .body
+                    .tags
+                    .as_ref()
+                    .map(|ts| ts.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" "))
+                    .unwrap_or_default();
                 println!(
-                    "{} {} #{}: {}",
+                    "{} {} #{}: {} {}",
                     &id[..12.min(id.len())],
                     &p.author[..12.min(p.author.len())],
                     p.seq,
-                    p.body.text.replace('\n', " ")
+                    p.body.text.replace('\n', " "),
+                    tags,
                 );
                 if !p.body.images.is_empty() {
                     println!("    [{} image(s)]", p.body.images.len());
@@ -285,4 +332,53 @@ async fn run_node(
         .map_err(|e| e.to_string())?;
     println!("shutting down");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_packet(tags: Option<Vec<String>>) -> packet::Packet {
+        packet::Packet {
+            v: 1,
+            author: "a".repeat(64),
+            seq: 0,
+            prev: packet::GENESIS_PREV.to_string(),
+            ts: 1,
+            kind: "post".to_string(),
+            body: packet::Body {
+                text: "x".into(),
+                images: vec![],
+                tags,
+            },
+            sig: "s".repeat(128),
+        }
+    }
+
+    #[test]
+    fn normalize_tags_cases() {
+        assert_eq!(normalize_tags(vec![]), None);
+        assert_eq!(normalize_tags(vec!["  ".into(), "".into()]), None);
+        assert_eq!(
+            normalize_tags(vec!["Rust".into(), " P2P ".into()]),
+            Some(vec!["rust".to_string(), "p2p".to_string()])
+        );
+        // normalization is case/whitespace only; charset rules live in
+        // validate_body, which rejects this at post time
+        assert_eq!(
+            normalize_tags(vec!["C++".into()]),
+            Some(vec!["c++".to_string()])
+        );
+    }
+
+    #[test]
+    fn packet_has_tag_cases() {
+        let tagged = test_packet(Some(vec!["rust".into(), "p2p".into()]));
+        assert!(packet_has_tag(&tagged, "rust"));
+        assert!(packet_has_tag(&tagged, "p2p"));
+        assert!(!packet_has_tag(&tagged, "go"));
+        assert!(!packet_has_tag(&tagged, "Rust")); // matching is exact; caller normalizes
+        assert!(!packet_has_tag(&test_packet(None), "rust"));
+        assert!(!packet_has_tag(&test_packet(Some(vec![])), "rust"));
+    }
 }
