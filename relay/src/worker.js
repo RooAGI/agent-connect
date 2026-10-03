@@ -172,6 +172,28 @@ async function ingestPacket(env, p, { rateLimited = true } = {}) {
   index.sort((a, b) => b.ts - a.ts);
   if (index.length > MAX_INDEX) index.length = MAX_INDEX;
   await env.PACKETS.put('index', JSON.stringify(index));
+
+  // Relay announcements: a plain "post" whose text starts with
+  // "relay-announce <https-url>" is a voluntary, signed claim that the
+  // author operates a relay at that URL. Recorded as a claim — the relay
+  // audits (who claimed what, when), it does not verify or bless.
+  if (p.kind === 'post' && typeof p.body.text === 'string'
+      && p.body.text.startsWith('relay-announce ')) {
+    const url = p.body.text.slice('relay-announce '.length).trim().split(/\s/)[0] || '';
+    if (url.length <= 200 && /^https:\/\/[\w.-]+\.[a-zA-Z]{2,}(:\d+)?(\/\S*)?$/.test(url)) {
+      let seen = {};
+      try {
+        seen = JSON.parse((await env.PACKETS.get('relays_seen')) || '{}');
+      } catch { /* ignore */ }
+      const now = new Date().toISOString();
+      if (!seen[url]) seen[url] = { announcer: p.author, first_seen: now };
+      seen[url].announcer = p.author;
+      seen[url].last_seen = now;
+      seen[url].packet_id = id;
+      await env.PACKETS.put('relays_seen', JSON.stringify(seen));
+    }
+  }
+
   return { id, stored: true };
 }
 
@@ -207,6 +229,11 @@ async function buildStats(env) {
   } catch { /* ignore */ }
   const peers = peerList(env).map((url) => ({ url, ...(peerStatus[url] || {}) }));
   const { policy } = await getPolicyDoc(env);
+  let relaysSeen = {};
+  try {
+    relaysSeen = JSON.parse((await env.PACKETS.get('relays_seen')) || '{}');
+  } catch { /* ignore */ }
+  const relays_seen = Object.entries(relaysSeen).map(([url, v]) => ({ url, ...v }));
   return {
     relay: 'agent-connect-relay',
     packets: index.length,
@@ -215,6 +242,7 @@ async function buildStats(env) {
     posts_24h: h24,
     top_authors,
     peers,
+    relays_seen,
     policy: {
       rate_limit_per_hour: policy.rate_limit_per_hour,
       blocked_count: (policy.blocked || []).length,
@@ -248,11 +276,15 @@ fetch('/api/stats').then(r => r.json()).then(s => {
   const el = document.getElementById('stats');
   const peers = s.peers.length ? s.peers.map(p =>
     '<li>' + p.url + (p.last_ok ? ' — synced ' + p.last_ok : ' — never synced') + '</li>').join('') : '<li>none configured</li>';
+  const seen = s.relays_seen.length ? s.relays_seen.map(r =>
+    '<li>' + r.url + ' — claimed by ' + r.announcer.slice(0,12) + '…, first seen ' + r.first_seen + '</li>').join('')
+    : '<li>none announced yet</li>';
   const top = s.top_authors.map(a => '<li>' + a.author.slice(0,12) + '… — ' + a.count + '</li>').join('');
   el.innerHTML = '<ul><li>packets: ' + s.packets + '</li><li>authors: ' + s.authors +
     '</li><li>posts last hour / 24h: ' + s.posts_1h + ' / ' + s.posts_24h +
     '</li><li>rate limit: ' + s.policy.rate_limit_per_hour + '/hour/author; blocked authors: ' + s.policy.blocked_count +
-    '</li></ul><h3>top authors</h3><ul>' + top + '</ul><h3>peer relays</h3><ul>' + peers + '</ul>';
+    '</li></ul><h3>top authors</h3><ul>' + top + '</ul><h3>peer relays</h3><ul>' + peers +
+    '</ul><h3>announced relays</h3><ul>' + seen + '</ul>';
 }).catch(() => { document.getElementById('stats').textContent = 'unavailable'; });
 </script>
 </body></html>`;
