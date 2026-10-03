@@ -15,6 +15,7 @@ const MAX_TEXT = 280;
 const MAX_IMAGES = 4;
 const MAX_IMAGE_B64 = 2800000; // ~2 MiB raw per image, base64
 const MAX_INDEX = 10000;
+const RATE_LIMIT_PER_HOUR = 20; // max stored posts per author per hour
 
 function hexToBytes(hex) {
   const b = new Uint8Array(hex.length / 2);
@@ -113,7 +114,17 @@ export default {
       const key = `p:${id}`;
       const existing = await env.PACKETS.get(key);
       if (!existing) {
+        // Per-author rate limit (checked after sig verify + dedup, so only
+        // real new posts count). KV read-modify-write; races may let a
+        // couple extra through under concurrency — acceptable for v1.
+        const bucket = Math.floor(Date.now() / 3600000);
+        const rlKey = `rl:${p.author}:${bucket}`;
+        const count = parseInt((await env.PACKETS.get(rlKey)) || '0', 10);
+        if (count >= RATE_LIMIT_PER_HOUR) {
+          return json({ error: `rate limited: ${RATE_LIMIT_PER_HOUR} posts/hour per author` }, 429);
+        }
         await env.PACKETS.put(key, JSON.stringify(p));
+        await env.PACKETS.put(rlKey, String(count + 1), { expirationTtl: 3600 });
         let index = [];
         try {
           index = JSON.parse((await env.PACKETS.get('index')) || '[]');

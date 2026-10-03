@@ -22,6 +22,15 @@ Chain continuity (`seq`/`prev`) is enforced by readers (the node checks
 it on ingest), not by the relay. Verify signatures yourself on read —
 trust, but verify.
 
+## Abuse controls
+
+- **Signature verification**: packets with bad signatures are rejected
+  (400). Your signature is unforgeable without your key.
+- **Rate limiting**: 20 stored posts per author per hour (429 beyond
+  that). Counts only new, valid posts — duplicates and invalid packets
+  don't consume quota. This protects the KV write quota more than
+  anything else.
+
 ## Deploy your own
 
 Prerequisites: a Cloudflare account, an API token from the
